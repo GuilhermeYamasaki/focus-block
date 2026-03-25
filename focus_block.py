@@ -388,7 +388,6 @@ class App(PasswordMixin):
         actions.pack(fill="x", padx=12, pady=(0, 10))
 
         tk.Button(actions, text="Remover selecionado", command=self.remove_selected).pack(side="left")
-        tk.Button(actions, text="Sincronizar com sistema", command=self.sync_state_from_system).pack(side="left", padx=(8, 0))
         tk.Button(actions, text="Trocar senha", command=self.change_password).pack(side="left", padx=(8, 0))
 
         bottom = tk.Frame(self.root)
@@ -452,8 +451,11 @@ class App(PasswordMixin):
             return
         if not self.verify_password_prompt():
             return
-        for index in reversed(selected):
-            del self.domains[index]
+        selected_domains = {self.listbox.get(index) for index in selected}
+        # Sync automatically before modifying to keep UI consistent with /etc/hosts.
+        system_domains = set(self.get_system_domains())
+        self.domains = sorted(system_domains | set(self.domains))
+        self.domains = [d for d in self.domains if d not in selected_domains]
         self.refresh_list()
 
     def change_password(self):
@@ -490,7 +492,7 @@ class App(PasswordMixin):
         ok = run_pkexec_write(self.domains)
         if ok:
             messagebox.showinfo("Sucesso", "Bloqueio aplicado no sistema.", parent=self.root)
-            self.update_status()
+            self.sync_state_from_system()
         else:
             messagebox.showerror(
                 "Erro",
@@ -501,10 +503,12 @@ class App(PasswordMixin):
     def clear_block(self):
         if not self.verify_password_prompt():
             return
+        # Sync automatically before clearing, then reflect the new system state.
+        self.sync_state_from_system()
         ok = run_pkexec_write([])
         if ok:
             messagebox.showinfo("Sucesso", "Bloqueio removido do sistema.", parent=self.root)
-            self.update_status()
+            self.sync_state_from_system()
         else:
             messagebox.showerror(
                 "Erro",
