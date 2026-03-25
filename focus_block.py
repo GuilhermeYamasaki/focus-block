@@ -23,6 +23,23 @@ HOSTS_FILE = "/etc/hosts"
 BACKUP_FILE = "/etc/hosts.focusblock.bak"
 BEGIN_MARKER = "# BEGIN FOCUS_BLOCK"
 END_MARKER = "# END FOCUS_BLOCK"
+BLOCK_IPS = {"127.0.0.1", "0.0.0.0", "::1"}
+HOSTS_SYSTEM_NAMES = {
+    "localhost",
+    "localhost.localdomain",
+    "localhost4",
+    "localhost4.localdomain4",
+    "localhost6",
+    "localhost6.localdomain6",
+    "ip6-localhost",
+    "ip6-loopback",
+    "ip6-localnet",
+    "ip6-mcastprefix",
+    "ip6-allnodes",
+    "ip6-allrouters",
+    "broadcasthost",
+    "local",
+}
 
 
 def ensure_config_dir() -> None:
@@ -114,21 +131,89 @@ def write_hosts(content: str) -> None:
         f.write(content)
 
 
-def extract_block_domains(content: str):
+def _extract_domains_from_hosts_lines(content: str):
+    domains = set()
+    for raw_line in content.splitlines():
+        # Remove comments and whitespace so we parse only host mappings.
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        if parts[0] not in BLOCK_IPS:
+            continue
+        for host in parts[1:]:
+            normalized = normalize_domain(host)
+            if not normalized:
+                continue
+            if normalized in HOSTS_SYSTEM_NAMES:
+                continue
+            domains.add(normalized)
+    return domains
+
+
+def _extract_focusblock_section(content: str) -> str:
     pattern = re.compile(
         rf"{re.escape(BEGIN_MARKER)}\n(.*?)\n{re.escape(END_MARKER)}",
         re.DOTALL,
     )
-    match = pattern.search(content)
-    if not match:
-        return []
+    sections = [match.group(1) for match in pattern.finditer(content)]
+    return "\n".join(sections)
 
-    domains = []
-    for line in match.group(1).splitlines():
-        parts = line.strip().split()
-        if len(parts) >= 2 and parts[0] in ("127.0.0.1", "0.0.0.0"):
-            domains.append(parts[1])
-    return sorted(set(domains))
+
+def extract_block_domains(content: str):
+    managed = _extract_domains_from_hosts_lines(_extract_focusblock_section(content))
+    all_blocked = _extract_domains_from_hosts_lines(content)
+    return sorted(managed | all_blocked)
+
+
+def remove_domains_from_hosts(content: str, domains):
+    remove_set = {normalize_domain(d) for d in domains if normalize_domain(d)}
+    if not remove_set:
+        return content
+
+    updated_lines = []
+    for raw_line in content.splitlines():
+        line = raw_line
+        comment = ""
+        if "#" in raw_line:
+            line, comment = raw_line.split("#", 1)
+            comment = "#" + comment
+
+        stripped = line.strip()
+        if not stripped:
+            updated_lines.append(raw_line)
+            continue
+
+        parts = stripped.split()
+        ip = parts[0]
+        hosts = parts[1:]
+        if ip not in BLOCK_IPS or not hosts:
+            updated_lines.append(raw_line)
+            continue
+
+        kept_hosts = []
+        for host in hosts:
+            normalized = normalize_domain(host)
+            if normalized and normalized in remove_set:
+                continue
+            kept_hosts.append(host)
+
+        if not kept_hosts:
+            if comment.strip():
+                updated_lines.append(comment)
+            continue
+
+        rebuilt = f"{ip} {' '.join(kept_hosts)}"
+        if comment.strip():
+            rebuilt = f"{rebuilt} {comment}"
+        updated_lines.append(rebuilt)
+
+    rebuilt_content = "\n".join(updated_lines)
+    if content.endswith("\n"):
+        rebuilt_content += "\n"
+    return rebuilt_content
 
 
 def build_block(domains):
@@ -159,7 +244,10 @@ def helper_write_from_payload(payload_path: str) -> int:
 
     domains = payload.get("domains", [])
     content = read_hosts()
-    new_content = replace_block(content, domains)
+    currently_blocked = _extract_domains_from_hosts_lines(content)
+    cleanup_set = currently_blocked | set(domains)
+    cleaned = remove_domains_from_hosts(content, cleanup_set)
+    new_content = replace_block(cleaned, domains)
     write_hosts(new_content)
     return 0
 
@@ -391,13 +479,10 @@ class App(PasswordMixin):
 
     def sync_state_from_system(self):
         system_domains = self.get_system_domains()
-        if system_domains:
-            self.domains = system_domains
-            self.config["domains"] = system_domains
-            save_config(self.config)
-            self.refresh_list()
-        else:
-            self.update_status()
+        self.domains = system_domains
+        self.config["domains"] = system_domains
+        save_config(self.config)
+        self.refresh_list()
 
     def apply_domains(self):
         self.config["domains"] = sorted(set(self.domains))
