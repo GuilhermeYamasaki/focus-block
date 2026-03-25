@@ -357,7 +357,7 @@ class App(PasswordMixin):
 
         tk.Label(
             top,
-            text="Bloqueador de domínios via /etc/hosts",
+            text="Bloqueador de domínios para foco e produtividade",
             font=("Arial", 14, "bold"),
         ).pack(anchor="w")
 
