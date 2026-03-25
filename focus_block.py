@@ -275,6 +275,22 @@ def run_pkexec_write(domains):
             pass
 
 
+def helper_restart_network() -> int:
+    result = subprocess.run(["systemctl", "restart", "NetworkManager"], text=True)
+    return result.returncode
+
+
+def run_pkexec_restart_network():
+    cmd = [
+        "pkexec",
+        sys.executable,
+        os.path.abspath(__file__),
+        "--helper-restart-network",
+    ]
+    result = subprocess.run(cmd, text=True)
+    return result.returncode == 0
+
+
 class PasswordMixin:
     def ensure_password_exists(self):
         if self.config.get("password_hash"):
@@ -395,11 +411,13 @@ class App(PasswordMixin):
 
         tk.Button(bottom, text="Aplicar bloqueio", command=self.apply_domains, height=2).pack(side="right")
         tk.Button(bottom, text="Desbloquear tudo", command=self.clear_block, height=2).pack(side="right", padx=(0, 8))
+        tk.Button(bottom, text="Reiniciar internet", command=self.restart_network, height=2).pack(side="left")
 
         help_text = (
             "Aceita domínio ou URL completa.\n"
             "Para remover itens ou desbloquear tudo, a senha é exigida.\n"
-            "Ao aplicar, o sistema pedirá a senha de administrador pelo pkexec."
+            "Ao aplicar, o sistema pedirá a senha de administrador pelo pkexec.\n"
+            "As alterações só serão aplicadas após reiniciar a internet."
         )
         tk.Label(self.root, text=help_text, justify="left", fg="#444").pack(anchor="w", padx=12, pady=(0, 12))
 
@@ -493,6 +511,20 @@ class App(PasswordMixin):
         if ok:
             messagebox.showinfo("Sucesso", "Bloqueio aplicado no sistema.", parent=self.root)
             self.sync_state_from_system()
+            restart_now = messagebox.askyesno(
+                "Reiniciar internet",
+                "Essas alterações só serão aplicadas quando reiniciar a internet.\n\nAplicar agora?",
+                parent=self.root,
+            )
+            if restart_now:
+                if run_pkexec_restart_network():
+                    messagebox.showinfo("Sucesso", "Internet reiniciada com sucesso.", parent=self.root)
+                else:
+                    messagebox.showerror(
+                        "Erro",
+                        "Não foi possível reiniciar a internet.\nVocê pode tentar depois com:\nsudo systemctl restart NetworkManager",
+                        parent=self.root,
+                    )
         else:
             messagebox.showerror(
                 "Erro",
@@ -516,6 +548,17 @@ class App(PasswordMixin):
                 parent=self.root,
             )
 
+    def restart_network(self):
+        ok = run_pkexec_restart_network()
+        if ok:
+            messagebox.showinfo("Sucesso", "Internet reiniciada com sucesso.", parent=self.root)
+        else:
+            messagebox.showerror(
+                "Erro",
+                "Não foi possível reiniciar a internet.\nVocê pode tentar depois com:\nsudo systemctl restart NetworkManager",
+                parent=self.root,
+            )
+
 
 def main():
     root = tk.Tk()
@@ -530,4 +573,6 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--helper-write":
         sys.exit(helper_write_from_payload(sys.argv[2]))
+    if len(sys.argv) == 2 and sys.argv[1] == "--helper-restart-network":
+        sys.exit(helper_restart_network())
     main()
