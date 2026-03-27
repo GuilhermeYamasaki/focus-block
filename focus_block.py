@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
+from game_challenge import run_unlock_game
+
 APP_NAME = "Focus Block"
 APP_ID = "focusblock"
 CONFIG_DIR = Path.home() / ".config" / APP_ID
@@ -320,7 +322,7 @@ class PasswordMixin:
         messagebox.showinfo("Sucesso", "Senha definida.", parent=self.root)
         return True
 
-    def verify_password_prompt(self):
+    def verify_password_prompt(self, require_game: bool = False):
         if not self.ensure_password_exists():
             return False
 
@@ -335,6 +337,10 @@ class PasswordMixin:
         if not verify_password(self.config, password):
             messagebox.showerror("Erro", "Senha incorreta.", parent=self.root)
             return False
+
+        if require_game and not run_unlock_game(parent=self.root):
+            return False
+
         return True
 
 
@@ -415,7 +421,7 @@ class App(PasswordMixin):
 
         help_text = (
             "Aceita domínio ou URL completa.\n"
-            "Para remover itens ou desbloquear tudo, a senha é exigida.\n"
+            "Para remover itens ou desbloquear tudo, e preciso senha + desafio rapido.\n"
             "Ao aplicar, o sistema pedirá a senha de administrador pelo pkexec.\n"
             "As alterações só serão aplicadas após reiniciar a internet."
         )
@@ -467,7 +473,7 @@ class App(PasswordMixin):
         selected = list(self.listbox.curselection())
         if not selected:
             return
-        if not self.verify_password_prompt():
+        if not self.verify_password_prompt(require_game=True):
             return
         selected_domains = {self.listbox.get(index) for index in selected}
         # Sync automatically before modifying to keep UI consistent with /etc/hosts.
@@ -533,7 +539,7 @@ class App(PasswordMixin):
             )
 
     def clear_block(self):
-        if not self.verify_password_prompt():
+        if not self.verify_password_prompt(require_game=True):
             return
         # Sync automatically before clearing, then reflect the new system state.
         self.sync_state_from_system()
